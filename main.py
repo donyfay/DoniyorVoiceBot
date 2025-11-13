@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import io
+import random 
 from dotenv import load_dotenv
 
 import aiohttp 
@@ -25,13 +26,21 @@ VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- 2. СИСТЕМНЫЙ ПРОМПТ ---
-SYSTEM_PROMPT = """
-Ты — это Дониёр. Ты переписываешься в Telegram со своими друзьями. 
-Ты очень вежливый, дружелюбный и современный человек. Твой стиль общения — неформальный, с использованием современных сленговых слов и большого количества эмодзи. 
-Твоя цель — быстро и точно отвечать, поддерживая дружеский тон. Твои ответы должны быть краткими, не более 3-4 предложений.
+# --- 2. БАЗОВЫЙ СИСТЕМНЫЙ ПРОМПТ (ОБНОВЛЕН ДЛЯ ИМЕНИ И ПРОФИЛЯ) ---
+# {name} будет заменено на имя собеседника или слово "друг".
+BASE_SYSTEM_PROMPT = """
+Ты — это Дониёр. Ты переписываешься в Telegram со своим другом, которого зовут {name}.
+Твои ответы должны быть дружелюбными, неформальными, с использованием современного сленга и эмодзи.
+Твой собеседник — это ты, и вот информация о твоей жизни, которую ты можешь использовать в разговоре, чтобы сделать его более личным:
+1. Работа: Менеджер по продажам металлопроката.
+2. Увлечения: Психология, плавание, изучение IT.
+3. Проекты: В свободное время читаешь книги и занимаешься разработкой ИИ-ассистентов.
+4. График/Семья: Работаешь 5/2, на выходных почти всегда занят, часто ездишь к родителям.
+
+Твои ответы должны быть краткими, не более 3-4 предложений.
+!!!КРИТИЧЕСКАЯ ИНСТРУКЦИЯ!!!: Не задавай вопрос в конце каждого сообщения. Задавай вопрос только один раз каждые два-три твоих ответа (случайным образом, не в каждом сообщении).
 """
-# --- КОНЕЦ СИСТЕМНОГО ПРОМПТА ---
+# --- КОНЕЦ БАЗОВОГО СИСТЕМНОГО ПРОМПТА ---
 
 # Инициализация API
 dp = Dispatcher(storage=MemoryStorage())
@@ -41,14 +50,12 @@ openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # --- 3. ЛОГИКА ПАМЯТИ (ИСТОРИЯ ЧАТА) ---
 user_histories = {}
-MAX_CONTEXT_MESSAGES = 10 
+MAX_CONTEXT_MESSAGES = 50 # Увеличение памяти с 10 до 50 сообщений
 
 def get_history(user_id):
-    """Инициализирует или возвращает историю для пользователя."""
+    """Инициализирует или возвращает историю диалога (без системного промпта)."""
     if user_id not in user_histories:
-        user_histories[user_id] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-        ]
+        user_histories[user_id] = []
     return user_histories[user_id]
 
 def update_history(user_id, role, content):
@@ -56,8 +63,25 @@ def update_history(user_id, role, content):
     history = get_history(user_id)
     history.append({"role": role, "content": content})
 
-    if len(history) > MAX_CONTEXT_MESSAGES + 1:
-        user_histories[user_id] = [history[0]] + history[-(MAX_CONTEXT_MESSAGES):]
+    # Обрезаем историю, сохраняя только последние сообщения
+    if len(history) > MAX_CONTEXT_MESSAGES: 
+        user_histories[user_id] = history[-(MAX_CONTEXT_MESSAGES):]
+
+def build_openai_messages(user_id, first_name):
+    """
+    Конструирует финальный список сообщений для OpenAI,
+    динамически вставляя системный промпт с именем.
+    """
+    # 1. Формируем персонализированный системный промпт
+    # Используем format() для подстановки имени
+    system_prompt = BASE_SYSTEM_PROMPT.format(name=first_name)
+    
+    # 2. Получаем историю диалога (без системного промпта)
+    dialog_history = get_history(user_id)
+    
+    # 3. Объединяем: [Системный промпт] + [История]
+    messages = [{"role": "system", "content": system_prompt}] + dialog_history
+    return messages
 
 
 # --- 4. ФУНКЦИИ УТИЛИТЫ ---
@@ -117,20 +141,32 @@ async def handle_text_to_text(message: types.Message):
     # --- КОНЕЦ ИЗОЛЯЦИИ ---
     
     user_id = message.from_user.id  
+    # Получаем имя собеседника. Если имени нет, используем "друг"
+    first_name = message.from_user.first_name or "друг"
     
     try:
-        # ОСНОВНАЯ ЛОГИКА (OpenAI)
+        # 1. Записываем сообщение пользователя в историю
         update_history(user_id, "user", message.text)
         
+        # 2. Формируем финальный список сообщений с именем для OpenAI
+        messages_for_openai = build_openai_messages(user_id, first_name)
+        
+        # ОСНОВНАЯ ЛОГИКА (OpenAI)
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=get_history(user_id),
+            messages=messages_for_openai,
             temperature=0.8
         )
         
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
         
+        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-60 секунд) ---
+        delay_s = random.randint(5, 60)
+        logging.info(f"Задержка перед отправкой ответа: {delay_s} секунд.")
+        await asyncio.sleep(delay_s)
+        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
+
         # ОТПРАВКА ОТВЕТА
         await bot.send_message(
             business_connection_id=business_id,
@@ -168,6 +204,8 @@ async def handle_voice_to_voice(message: types.Message):
     # --- КОНЕЦ ИЗОЛЯЦИИ ---
     
     user_id = message.from_user.id
+    # Получаем имя собеседника. Если имени нет, используем "друг"
+    first_name = message.from_user.first_name or "друг"
     audio_file_path = None
     
     try:
@@ -187,9 +225,12 @@ async def handle_voice_to_voice(message: types.Message):
         # 2. Генерация текстового ответа (ChatGPT)
         update_history(user_id, "user", user_text)
         
+        # Формируем финальный список сообщений с именем для OpenAI
+        messages_for_openai = build_openai_messages(user_id, first_name)
+        
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=get_history(user_id),
+            messages=messages_for_openai,
             temperature=0.8 
         )
         reply_text = response.choices[0].message.content
@@ -225,6 +266,12 @@ async def handle_voice_to_voice(message: types.Message):
         # 4.2 Отправка голосового сообщения
         telegram_file = FSInputFile(audio_file_path)
         
+        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-60 секунд) ---
+        delay_s = random.randint(5, 60)
+        logging.info(f"Задержка перед отправкой голосового ответа: {delay_s} секунд.")
+        await asyncio.sleep(delay_s)
+        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
+
         await bot.send_voice(
             business_connection_id=business_id,
             chat_id=message.chat.id,
