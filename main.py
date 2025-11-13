@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import io
+import json # Добавлено для отладки, если нужно
 from dotenv import load_dotenv
 
 # ДОБАВЛЕНО: Библиотека для прямого асинхронного HTTP-запроса
@@ -11,6 +12,8 @@ import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage 
 from aiogram.types import FSInputFile 
+from aiogram.filters import Command # Добавлено для команды /start
+from aiogram.enums import ParseMode # Добавлено для форматирования
 
 # OpenAI (Используем Async версию)
 from openai import AsyncOpenAI 
@@ -42,8 +45,8 @@ SYSTEM_PROMPT = """
 Если не уверен в ответе — отвечай нейтрально, с лёгкой неопределённостью, как человек.
 
 Примеры твоего общения:
-- "ага щас гляну )"
-- "да норм всё, чё ты 😄"
+- "ага сейчас гляну )"
+- "да норм всё, чего ты )"
 - "я на улице, позже отвечу ок?"
 - "понял, потом обсудим 👍"
 - "а ты как? "
@@ -96,23 +99,40 @@ async def delete_temp_file(file_path):
         logging.info(f"Временный файл удален: {file_path}")
 
 
-# --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ ---
+# --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ (ИСПРАВЛЕНЫ ДЛЯ BUSINESS-АККАУНТА) ---
 
 # 5.1. Сброс контекста
-@dp.message(F.text == '/start', F.chat.type == 'private')
+# Команда /start может прийти как обычное сообщение, так и как business_message.
+# Проще всего обрабатывать ее через dp.message и добавить проверку business_connection_id
+@dp.message(Command("start"), F.chat.type == 'private')
 async def handle_start(message: types.Message):
     user_id = message.from_user.id
     if user_id in user_histories:
         del user_histories[user_id]
     
-    await message.reply(
-        "Память сброшена. Начинаем с чистого листа! Готов общаться в стиле Дониёра. 👋"
-    )
+    response_text = "Память сброшена. Начинаем с чистого листа! Готов общаться в стиле Дониёра. 👋"
+    
+    # КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Ответ должен учитывать Business-подключение
+    if message.business_connection_id:
+        await bot.send_message(
+            business_connection_id=message.business_connection_id,
+            chat_id=message.chat.id,
+            text=response_text
+        )
+    else:
+        await message.reply(response_text)
 
 
 # 5.2. ТЕКСТ -> ТЕКСТ (С памятью)
-@dp.message(F.text, F.chat.type == 'private')
+@dp.business_message(F.text) # ИСПРАВЛЕНО: Теперь ловит Business-сообщения
 async def handle_text_to_text(message: types.Message):
+    
+    # КРИТИЧЕСКАЯ ПРОВЕРКА
+    business_id = message.business_connection_id
+    if not business_id:
+        logging.error("Business connection ID is missing for text message.")
+        return # Игнорируем, если это не Business-сообщение (хотя фильтр уже должен отсеять)
+    
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     user_id = message.from_user.id
     
@@ -128,92 +148,35 @@ async def handle_text_to_text(message: types.Message):
         reply_text = response.choices[0].message.content
         
         update_history(user_id, "assistant", reply_text)
-        await message.reply(reply_text)
+        
+        # КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Используем business_connection_id для ответа
+        await bot.send_message(
+            business_connection_id=business_id,
+            chat_id=message.chat.id,
+            text=reply_text
+        )
+        
+        logging.info(f"Текстовый ответ отправлен через Business ID: {business_id}")
         
     except Exception as e:
-        logging.error(f"Ошибка при обработке текста: {e}")
-        await message.reply("Извини, Дониёр сейчас занят и не смог ответить текстом. 😥")
+        logging.error(f"Ошибка при обработке текста в Business-чате: {e}")
+        # Ответ тоже должен идти через Business-ID
+        await bot.send_message(
+            business_connection_id=business_id,
+            chat_id=message.chat.id,
+            text="Извини, Дониёр сейчас занят и не смог ответить текстом. 😥"
+        )
 
 
 # 5.3. ГОЛОС -> ГОЛОС (С памятью и синтезом)
-@dp.message(F.voice, F.chat.type == 'private')
+@dp.business_message(F.voice) # ИСПРАВЛЕНО: Теперь ловит Business-сообщения с голосом
 async def handle_voice_to_voice(message: types.Message):
-    await bot.send_chat_action(chat_id=message.chat.id, action="record_voice") 
-    user_id = message.from_user.id
-    audio_file_path = None
     
-    try:
-        # 1. Распознавание речи (Whisper)
-        voice_file_info = await bot.get_file(message.voice.file_id)
-        voice_downloaded = io.BytesIO()
-        await bot.download_file(voice_file_info.file_path, voice_downloaded)
-        voice_downloaded.seek(0)
-        
-        transcript = await openai_client.audio.transcriptions.create(
-            model="whisper-1", 
-            file=("voice.ogg", voice_downloaded.read(), "audio/ogg"),
-        )
-        user_text = transcript.text
-        logging.info(f"Распознанный текст: {user_text}")
-
-        # 2. Генерация текстового ответа (ChatGPT)
-        update_history(user_id, "user", user_text)
-        
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=get_history(user_id),
-            temperature=0.8 # Повышаем температуру для живого стиля
-        )
-        reply_text = response.choices[0].message.content
-        update_history(user_id, "assistant", reply_text)
-        
-        # 3. Синтез речи (ElevenLabs) - ПРЯМОЙ AIOHTTP ЗАПРОС
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
-        headers = {
-            "Accept": "audio/mpeg",
-            "xi-api-key": ELEVENLABS_API_KEY,
-            "Content-Type": "application/json"
-        }
-        data = {
-            "text": reply_text,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=data) as response:
-                if response.status != 200:
-                    error_message = await response.text()
-                    raise Exception(f"ElevenLabs API Error (Code {response.status}): {error_message}")
-                
-                # 4. Получение аудио 
-                audio_data_bytes = await response.read()
-        
-        # Сохраняем аудиобайты во временный файл
-        audio_file_path = f"response_{message.chat.id}_{message.message_id}.mp3"
-        with open(audio_file_path, "wb") as f:
-            f.write(audio_data_bytes)
-                
-        # 4.2 Отправка голосового сообщения
-        telegram_file = FSInputFile(audio_file_path)
-        await message.answer_voice(telegram_file)
-            
-        logging.info("Голосовое сообщение (ответ) отправлено.")
-
-    except Exception as e:
-        logging.error(f"Ошибка в голосовой логике: {e}")
-        await message.reply(f"Извини, я не смог обработать голосовое сообщение. Кажется, Дониёр отвлёкся. 😥")
-        
-    finally:
-        # 5. Очистка
-        if audio_file_path and os.path.exists(audio_file_path):
-            asyncio.create_task(delete_temp_file(audio_file_path))
-
-
-# --- 6. ЗАПУСК БОТА (ИСПРАВЛЕНО) ---
-if __name__ == '__main__':
-    if not TELEGRAM_BOT_TOKEN:
-        logging.error("TELEGRAM_BOT_TOKEN не найден. Проверьте файл .env.")
-    else:
-        logging.info("Запуск бота...")
-        dp.run_polling(bot, skip_updates=True)
+    # КРИТИЧЕСКАЯ ПРОВЕРКА
+    business_id = message.business_connection_id
+    if not business_id:
+        logging.error("Business connection ID is missing for voice message.")
+        return
+    
+    await bot.send_chat_action(chat_id=message.chat.id, action="record_voice") 
+    user_id = message.from_user.
