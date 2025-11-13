@@ -101,7 +101,6 @@ async def handle_start_private(message: types.Message):
 @dp.business_message(F.text) 
 async def handle_text_to_text(message: types.Message):
     
-    # КРИТИЧЕСКАЯ ПРОВЕРКА ДЛЯ PEER_ID_INVALID
     business_id = message.business_connection_id
     if not business_id or not message.chat.id:
         logging.warning("Пропуск сообщения: невалидные ID (вероятно, служебное).")
@@ -109,15 +108,20 @@ async def handle_text_to_text(message: types.Message):
     
     logging.info(f"Получено Business-сообщение от Chat ID: {message.chat.id}. Текст: {message.text[:30]}")
     
+    # --- ИЗОЛЯЦИЯ send_chat_action ДЛЯ ИЗБЕЖАНИЯ PEER_ID_INVALID ---
     try:
-        # Теперь безопасно использовать message.chat.id для send_chat_action
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         logging.info("Отправлено 'typing'...")
-        
-        user_id = message.from_user.id  
-
+    except Exception as e:
+        logging.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
+    # --- КОНЕЦ ИЗОЛЯЦИИ ---
+    
+    user_id = message.from_user.id  
+    
+    try:
+        # ОСНОВНАЯ ЛОГИКА (OpenAI)
         update_history(user_id, "user", message.text)
-
+        
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=get_history(user_id),
@@ -127,6 +131,7 @@ async def handle_text_to_text(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
         
+        # ОТПРАВКА ОТВЕТА
         await bot.send_message(
             business_connection_id=business_id,
             chat_id=message.chat.id,
@@ -136,7 +141,8 @@ async def handle_text_to_text(message: types.Message):
         logging.info(f"Текстовый ответ отправлен через Business ID: {business_id}")
         
     except Exception as e:
-        logging.error(f"Ошибка при обработке текста в Business-чате: {e}")
+        # Этот блок сработает, только если упадет OpenAI или send_message
+        logging.error(f"Критическая ошибка при работе с OpenAI/отправке сообщения: {e}")
         await bot.send_message(
             business_connection_id=business_id,
             chat_id=message.chat.id,
@@ -148,13 +154,19 @@ async def handle_text_to_text(message: types.Message):
 @dp.business_message(F.voice)
 async def handle_voice_to_voice(message: types.Message):
     
-    # КРИТИЧЕСКАЯ ПРОВЕРКА ДЛЯ PEER_ID_INVALID
     business_id = message.business_connection_id
     if not business_id or not message.chat.id:
         logging.warning("Пропуск голосового сообщения: невалидные ID (вероятно, служебное).")
         return 
     
-    await bot.send_chat_action(chat_id=message.chat.id, action="record_voice") 
+    # --- ИЗОЛЯЦИЯ send_chat_action ДЛЯ ИЗБЕЖАНИЯ PEER_ID_INVALID ---
+    try:
+        await bot.send_chat_action(chat_id=message.chat.id, action="record_voice") 
+        logging.info("Отправлено 'record_voice'...")
+    except Exception as e:
+        logging.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
+    # --- КОНЕЦ ИЗОЛЯЦИИ ---
+    
     user_id = message.from_user.id
     audio_file_path = None
     
@@ -222,7 +234,7 @@ async def handle_voice_to_voice(message: types.Message):
         logging.info("Голосовое сообщение (ответ) отправлено.")
 
     except Exception as e:
-        logging.error(f"Ошибка в голосовой логике в Business-чате: {e}")
+        logging.error(f"Критическая ошибка в голосовой логике в Business-чате: {e}")
         await bot.send_message(
             business_connection_id=business_id,
             chat_id=message.chat.id,
