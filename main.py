@@ -14,8 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import FSInputFile 
 from aiogram.filters import Command 
 from aiogram.enums import ParseMode 
-
-# OpenAI (Используем Async версию)
+# Импорт AsyncOpenAI (предполагается, что он есть в requirements.txt)
 from openai import AsyncOpenAI 
 
 # --- 1. ЗАГРУЗКА КЛЮЧЕЙ И КОНФИГУРАЦИЯ ---
@@ -26,6 +25,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") 
+
+# ЛОГИКА АВТОРИЗАЦИИ УДАЛЕНА
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -88,11 +89,13 @@ async def delete_temp_file(file_path):
         os.remove(file_path)
         logging.info(f"Временный файл удален: {file_path}")
 
+# --- 4.5. ФИЛЬТРЫ БЕЗОПАСНОСТИ ---
+# Вся логика фильтрации удалена
 
-# --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ (ИСПРАВЛЕНЫ ДЛЯ BUSINESS-АККАУНТА) ---
+# --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ ---
 
 # 5.1. Сброс контекста
-@dp.message(Command("start"), F.chat.type == 'private')
+@dp.message(Command("start"), F.chat.type == 'private') # ФИЛЬТР УДАЛЕН
 async def handle_start(message: types.Message):
     user_id = message.from_user.id
     if user_id in user_histories:
@@ -112,7 +115,7 @@ async def handle_start(message: types.Message):
 
 
 # 5.2. ТЕКСТ -> ТЕКСТ (С памятью)
-@dp.business_message(F.text) 
+@dp.business_message(F.text) # ФИЛЬТР УДАЛЕН
 async def handle_text_to_text(message: types.Message):
     
     # КРИТИЧЕСКАЯ ПРОВЕРКА
@@ -122,7 +125,6 @@ async def handle_text_to_text(message: types.Message):
         return 
     
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    # ИСПРАВЛЕННАЯ СИНТАКСИЧЕСКАЯ ОШИБКА
     user_id = message.from_user.id  
 
     update_history(user_id, "user", message.text)
@@ -158,7 +160,7 @@ async def handle_text_to_text(message: types.Message):
 
 
 # 5.3. ГОЛОС -> ГОЛОС (С памятью и синтезом)
-@dp.business_message(F.voice) 
+@dp.business_message(F.voice) # ФИЛЬТР УДАЛЕН
 async def handle_voice_to_voice(message: types.Message):
     
     # КРИТИЧЕСКАЯ ПРОВЕРКА
@@ -168,7 +170,6 @@ async def handle_voice_to_voice(message: types.Message):
         return
     
     await bot.send_chat_action(chat_id=message.chat.id, action="record_voice") 
-    # ИСПРАВЛЕННАЯ СИНТАКСИЧЕСКАЯ ОШИБКА
     user_id = message.from_user.id
     audio_file_path = None
     
@@ -182,12 +183,11 @@ async def handle_voice_to_voice(message: types.Message):
         transcript = await openai_client.audio.transcriptions.create(
             model="whisper-1", 
             file=("voice.ogg", voice_downloaded.read(), "audio/ogg"),
-            # Whisper автоматически распознает оба языка
         )
         user_text = transcript.text
         logging.info(f"Распознанный текст: {user_text}")
 
-        # 2. Генерация текстового ответа (ChatGPT) - Система PROMPT теперь двуязычная и гибкая
+        # 2. Генерация текстового ответа (ChatGPT)
         update_history(user_id, "user", user_text)
         
         response = await openai_client.chat.completions.create(
@@ -207,8 +207,7 @@ async def handle_voice_to_voice(message: types.Message):
         }
         data = {
             "text": reply_text,
-            # Используем мультиязычную модель ElevenLabs
-            "model_id": "eleven_multilingual_v2", 
+            "model_id": "eleven_multilingual_v2",
             "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
         }
 
@@ -251,6 +250,29 @@ async def handle_voice_to_voice(message: types.Message):
         # 5. Очистка
         if audio_file_path and os.path.exists(audio_file_path):
             asyncio.create_task(delete_temp_file(audio_file_path))
+
+
+# 5.4. ОБРАБОТЧИК ДЛЯ НЕРАСПОЗНАННЫХ СООБЩЕНИЙ (добавлен для обработки стикеров и других типов контента)
+@dp.business_message()
+async def handle_unhandled_business_messages(message: types.Message):
+    """Ответ на стикеры, фото и другие необработанные типы сообщений."""
+    business_id = message.business_connection_id
+    user_id = message.from_user.id
+    
+    if message.content_type not in ['text', 'voice']:
+        logging.info(f"Получено нераспознанное Business-сообщение от ID: {user_id} (тип: {message.content_type}). Отправка нейтрального ответа.")
+        
+        # Отправляем нейтральный ответ
+        try:
+            await bot.send_message(
+                business_connection_id=business_id,
+                chat_id=message.chat.id,
+                text="Не понял, это что? Лучше напиши или отправь голосовое. 😉"
+            )
+        except Exception as e:
+             logging.error(f"Ошибка при отправке нейтрального ответа в Business-чате: {e}")
+    
+    return
 
 
 # --- 6. ЗАПУСК БОТА ---
