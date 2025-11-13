@@ -1,8 +1,9 @@
-import os
 import logging
 import asyncio
 import io
 import random
+import aiogram
+print("Aiogram version:", aiogram.__version__)
 from dotenv import load_dotenv
 
 import aiohttp
