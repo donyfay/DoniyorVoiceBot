@@ -10,8 +10,7 @@ import aiohttp
 # Aiogram v3 импорты
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import FSInputFile, Message
-from aiogram.types.business_connection import BusinessMessage # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
+from aiogram.types import FSInputFile, Message, BusinessMessage
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
 from openai import AsyncOpenAI
@@ -230,7 +229,6 @@ async def handle_voice_to_voice(message: BusinessMessage):
 
         # Формируем финальный список сообщений с именем для OpenAI
         messages_for_openai = build_openai_messages(user_id, first_name)
-
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages_for_openai,
