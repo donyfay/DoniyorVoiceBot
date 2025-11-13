@@ -1,2 +1,2 @@
-#!usrbinenv bash
-python main.py 
+#!/usr/bin/env bash
+python main.py
