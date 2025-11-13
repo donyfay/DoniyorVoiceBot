@@ -210,14 +210,10 @@ async def handle_voice_to_voice(message: types.Message):
             asyncio.create_task(delete_temp_file(audio_file_path))
 
 
-# --- 6. ЗАПУСК БОТА ---
+# --- 6. ЗАПУСК БОТА (ИСПРАВЛЕНО) ---
 if __name__ == '__main__':
     if not TELEGRAM_BOT_TOKEN:
         logging.error("TELEGRAM_BOT_TOKEN не найден. Проверьте файл .env.")
     else:
         logging.info("Запуск бота...")
-        dp.run_polling(bot, skip_updates=True)
-    else:
-        logging.info("Запуск бота...")
-
         dp.run_polling(bot, skip_updates=True)
