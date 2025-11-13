@@ -1,12 +1,5 @@
-# Aiogram dev‑ветка с BusinessMessage
-git+https://github.com/aiogram/aiogram.git@dev-3.x#egg=aiogram
-
-# OpenAI API
-openai>=2.7
-
-# Работа с .env
-python-dotenv>=1.2
-
-# Асинхронные HTTP-запросы и файлы
-aiohttp>=3.13
-aiofiles>=24.0
+aiogram==3.22.0
+openai
+python-dotenv
+aiohttp
+aiofiles
