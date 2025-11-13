@@ -95,7 +95,7 @@ async def delete_temp_file(file_path):
 # --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ ---
 
 # 5.1.А. Сброс контекста в Business-чате
-@dp.business_message(Command("start")) 
+@dp.business_message(Command("start"), F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
 async def handle_start_business(message: types.Message):
     user_id = message.from_user.id
     if user_id in user_histories:
@@ -122,7 +122,7 @@ async def handle_start_private(message: types.Message):
 
 
 # 5.2. ТЕКСТ -> ТЕКСТ (С памятью)
-@dp.business_message(F.text) 
+@dp.business_message(F.text, F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
 async def handle_text_to_text(message: types.Message):
     
     business_id = message.business_connection_id
@@ -187,7 +187,7 @@ async def handle_text_to_text(message: types.Message):
 
 
 # 5.3. ГОЛОС -> ГОЛОС (С памятью и синтезом)
-@dp.business_message(F.voice)
+@dp.business_message(F.voice, F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
 async def handle_voice_to_voice(message: types.Message):
     
     business_id = message.business_connection_id
@@ -295,7 +295,7 @@ async def handle_voice_to_voice(message: types.Message):
 
 
 # 5.4. НЕОБРАБОТАННЫЕ СООБЩЕНИЯ В BUSINESS CHAT (стикеры, фото)
-@dp.business_message()
+@dp.business_message(F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
 async def handle_unhandled_business_messages(message: types.Message):
     """Ответ на стикеры, фото и другие необработанные типы сообщений."""
     business_id = message.business_connection_id
