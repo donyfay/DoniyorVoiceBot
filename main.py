@@ -121,7 +121,7 @@ async def handle_start_private(message: types.Message):
     await message.reply(response_text)
 
 
-# 5.2. ТЕКСТ -> ТЕКСТ (С памятью)
+# 5.2. ТЕКСТ -> ТЕКСТ (С памятью, Business Chat)
 @dp.business_message(F.text, F.is_outgoing.ne(True))
 async def handle_text_to_text(message: types.Message):
     
@@ -137,7 +137,6 @@ async def handle_text_to_text(message: types.Message):
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         logging.info("Отправлено 'typing'...")
     except Exception as e:
-        # Эта ошибка (PEER_ID_INVALID) не критична, если она возникает
         logging.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
     # --- КОНЕЦ ИЗОЛЯЦИИ ---
     
@@ -163,7 +162,7 @@ async def handle_text_to_text(message: types.Message):
         update_history(user_id, "assistant", reply_text)
         
         # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
-        delay_s = random.randint(5, 20) # УМЕНЬШЕНО: max 20 секунд
+        delay_s = random.randint(5, 20) 
         logging.info(f"Задержка перед отправкой ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
         # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
@@ -187,7 +186,7 @@ async def handle_text_to_text(message: types.Message):
         )
 
 
-# 5.3. ГОЛОС -> ГОЛОС (С памятью и синтезом)
+# 5.3. ГОЛОС -> ГОЛОС (С памятью, Business Chat)
 @dp.business_message(F.voice, F.is_outgoing.ne(True))
 async def handle_voice_to_voice(message: types.Message):
     
@@ -268,7 +267,7 @@ async def handle_voice_to_voice(message: types.Message):
         telegram_file = FSInputFile(audio_file_path)
         
         # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
-        delay_s = random.randint(5, 20) # УМЕНЬШЕНО: max 20 секунд
+        delay_s = random.randint(5, 20) 
         logging.info(f"Задержка перед отправкой голосового ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
         # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
@@ -314,13 +313,69 @@ async def handle_unhandled_business_messages(message: types.Message):
              logging.error(f"Ошибка при отправке нейтрального ответа в Business-чате: {e}")
     
     return
-    
-# 5.5. ТЕКСТ В ПРЯМОМ ЛС С БОТОМ (Перенаправление)
-@dp.message(F.text, F.chat.type == 'private') 
-async def handle_private_text(message: types.Message):
-    """Ловит весь текст, кроме /start, в прямом ЛС и перенаправляет в Business Chat."""
-    await message.reply("Дониёр отвечает только через свой Business-аккаунт. Пожалуйста, напишите ему в Business Chat, чтобы я мог ответить. 😊")
 
+# 5.5. ТЕКСТ В ПРЯМОМ ЛС С БОТОМ (Включен AI)
+@dp.message(F.text, F.chat.type == 'private') 
+async def handle_private_text_ai(message: types.Message):
+    
+    logging.info(f"Получено Private-сообщение от Chat ID: {message.chat.id}. Текст: {message.text[:30]}")
+    
+    # Отправляем "typing"
+    try:
+        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        logging.info("Отправлено 'typing'...")
+    except Exception as e:
+        logging.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
+        
+    user_id = message.from_user.id  
+    first_name = message.from_user.first_name or "друг"
+    
+    try:
+        # 1. Записываем сообщение пользователя в историю
+        update_history(user_id, "user", message.text)
+        
+        # 2. Формируем финальный список сообщений
+        messages_for_openai = build_openai_messages(user_id, first_name)
+        
+        # ОСНОВНАЯ ЛОГИКА (OpenAI)
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages_for_openai,
+            temperature=0.8
+        )
+        
+        reply_text = response.choices[0].message.content
+        update_history(user_id, "assistant", reply_text)
+        
+        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
+        delay_s = random.randint(5, 20) 
+        logging.info(f"Задержка перед отправкой ответа в ЛС: {delay_s} секунд.")
+        await asyncio.sleep(delay_s)
+        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
+
+        # ОТПРАВКА ОТВЕТА
+        await message.reply(reply_text)
+        
+        logging.info(f"Текстовый ответ отправлен в ЛС Chat ID: {message.chat.id}")
+        
+    except Exception as e:
+        logging.error(f"Критическая ошибка при работе с OpenAI/отправке сообщения в ЛС: {e}")
+        await message.reply("Извини, Дониёр сейчас занят и не смог ответить текстом в ЛС. 😥")
+
+
+# 5.6. НЕОБРАБОТАННЫЕ СООБЩЕНИЯ В ПРИВАТНОМ ЧАТЕ 
+@dp.message(F.chat.type == 'private')
+async def handle_unhandled_private_messages(message: types.Message):
+    """Ответ на стикеры, фото и другие необработанные типы сообщений в ЛС."""
+    if message.content_type not in ['text', 'voice']:
+        logging.info(f"Получено нераспознанное Private-сообщение (тип: {message.content_type}). Отправка нейтрального ответа.")
+        
+        try:
+            await message.reply("Не понял, это что? Лучше напиши или отправь голосовое. 😉")
+        except Exception as e:
+             logging.error(f"Ошибка при отправке нейтрального ответа в ЛС: {e}")
+    
+    return
 
 # --- 6. ЗАПУСК БОТА ---
 if __name__ == '__main__':
