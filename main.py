@@ -1,9 +1,8 @@
+import os
 import logging
 import asyncio
 import io
 import random
-import aiogram
-print("Aiogram version:", aiogram.__version__)
 from dotenv import load_dotenv
 
 import aiohttp
@@ -11,9 +10,11 @@ import aiohttp
 # Aiogram v3 импорты
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import FSInputFile, Message, BusinessMessage
+from aiogram.types import FSInputFile, Message
+from aiogram.types.business import BusinessMessage  # <-- Исправлено
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
+
 from openai import AsyncOpenAI
 
 # --- 1. ЗАГРУЗКА КЛЮЧЕЙ И КОНФИГУРАЦИЯ ---
