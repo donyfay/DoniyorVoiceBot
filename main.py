@@ -95,7 +95,7 @@ async def delete_temp_file(file_path):
 # --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ ---
 
 # 5.1.А. Сброс контекста в Business-чате
-@dp.business_message(Command("start"), F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
+@dp.business_message(Command("start"), F.is_outgoing.ne(True))
 async def handle_start_business(message: types.Message):
     user_id = message.from_user.id
     if user_id in user_histories:
@@ -122,7 +122,7 @@ async def handle_start_private(message: types.Message):
 
 
 # 5.2. ТЕКСТ -> ТЕКСТ (С памятью)
-@dp.business_message(F.text, F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
+@dp.business_message(F.text, F.is_outgoing.ne(True))
 async def handle_text_to_text(message: types.Message):
     
     business_id = message.business_connection_id
@@ -137,6 +137,7 @@ async def handle_text_to_text(message: types.Message):
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         logging.info("Отправлено 'typing'...")
     except Exception as e:
+        # Эта ошибка (PEER_ID_INVALID) не критична, если она возникает
         logging.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
     # --- КОНЕЦ ИЗОЛЯЦИИ ---
     
@@ -161,8 +162,8 @@ async def handle_text_to_text(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
         
-        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-60 секунд) ---
-        delay_s = random.randint(5, 60)
+        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
+        delay_s = random.randint(5, 20) # УМЕНЬШЕНО: max 20 секунд
         logging.info(f"Задержка перед отправкой ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
         # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
@@ -187,7 +188,7 @@ async def handle_text_to_text(message: types.Message):
 
 
 # 5.3. ГОЛОС -> ГОЛОС (С памятью и синтезом)
-@dp.business_message(F.voice, F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
+@dp.business_message(F.voice, F.is_outgoing.ne(True))
 async def handle_voice_to_voice(message: types.Message):
     
     business_id = message.business_connection_id
@@ -266,8 +267,8 @@ async def handle_voice_to_voice(message: types.Message):
         # 4.2 Отправка голосового сообщения
         telegram_file = FSInputFile(audio_file_path)
         
-        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-60 секунд) ---
-        delay_s = random.randint(5, 60)
+        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
+        delay_s = random.randint(5, 20) # УМЕНЬШЕНО: max 20 секунд
         logging.info(f"Задержка перед отправкой голосового ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
         # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
@@ -295,7 +296,7 @@ async def handle_voice_to_voice(message: types.Message):
 
 
 # 5.4. НЕОБРАБОТАННЫЕ СООБЩЕНИЯ В BUSINESS CHAT (стикеры, фото)
-@dp.business_message(F.is_outgoing.ne(True)) # <-- ДОБАВЛЕН ФИЛЬТР
+@dp.business_message(F.is_outgoing.ne(True))
 async def handle_unhandled_business_messages(message: types.Message):
     """Ответ на стикеры, фото и другие необработанные типы сообщений."""
     business_id = message.business_connection_id
