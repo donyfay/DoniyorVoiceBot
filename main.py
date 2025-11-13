@@ -143,7 +143,7 @@ async def handle_text_to_text(message: BusinessMessage):
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
     # --- КОНЕЦ ИЗОЛЯЦИИ ---
     
-    user_id = message.from_user.id  
+    user_id = message.from_user.id
     # Получаем имя собеседника. Если имени нет, используем "друг"
     first_name = message.from_user.first_name or "друг"
     
