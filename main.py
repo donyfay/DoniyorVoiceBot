@@ -15,8 +15,7 @@ from openai import AsyncOpenAI
 import aiohttp
 
 # --- 1. ЗАГРУЗКА КЛЮЧЕЙ И КОНФИГУРАЦИЯ ---
-# !!! УДАЛЕН ВЫЗОВ load_dotenv() - Render использует os.getenv напрямую !!!
-
+# Ключи считываются напрямую из переменных окружения Render
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -27,7 +26,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # --- 2. БАЗОВЫЙ СИСТЕМНЫЙ ПРОМПТ (ОЧЕНЬ СТРОГИЙ) ---
-# {name} будет заменено на имя собеседника или слово "друг".
 BASE_SYSTEM_PROMPT = """
 Ты — это Дониёр. Ты переписываешься в Telegram со своим другом, которого зовут {name}.
 Твои ответы должны быть дружелюбными, неформальными, с использованием современного сленга.
@@ -51,7 +49,7 @@ openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # --- 3. ЛОГИКА ПАМЯТИ (ИСТОРИЯ ЧАТА) ---
 user_histories = {}
-MAX_CONTEXT_MESSAGES = 40 # Память установлена на 40 сообщений
+MAX_CONTEXT_MESSAGES = 40 
 
 def get_history(user_id):
     """Инициализирует или возвращает историю диалога (без системного промпта)."""
@@ -64,7 +62,6 @@ def update_history(user_id, role, content):
     history = get_history(user_id)
     history.append({"role": role, "content": content})
 
-    # Обрезаем историю, сохраняя только последние сообщения
     if len(history) > MAX_CONTEXT_MESSAGES:
         user_histories[user_id] = history[-(MAX_CONTEXT_MESSAGES):]
 
@@ -73,13 +70,8 @@ def build_openai_messages(user_id, first_name):
     Конструирует финальный список сообщений для OpenAI,
     динамически вставляя системный промпт с именем.
     """
-    # 1. Формируем персонализированный системный промпт
     system_prompt = BASE_SYSTEM_PROMPT.format(name=first_name)
-
-    # 2. Получаем историю диалога (без системного промпта)
     dialog_history = get_history(user_id)
-
-    # 3. Объединяем: [Системный промпт] + [История]
     messages = [{"role": "system", "content": system_prompt}] + dialog_history
     return messages
 
@@ -96,7 +88,6 @@ async def delete_temp_file(file_path):
 # --- 5. ОБРАБОТЧИКИ СООБЩЕНИЙ ---
 
 # 5.1.А. Сброс контекста в Business-чате
-# Используем types.Message и F.business_connection_id для фильтрации
 @dp.message(Command("start"), F.business_connection_id, F.is_outgoing.ne(True))
 async def handle_start_business(message: types.Message):
     user_id = message.from_user.id
@@ -111,8 +102,8 @@ async def handle_start_business(message: types.Message):
         text=response_text
     )
 
-# 5.1.Б. Сброс контекста в ПРЯМОМ ЛС с ботом
-@dp.message(Command("start"), F.chat.type == 'private')
+# 5.1.Б. Сброс контекста в ПРЯМОМ ЛС с ботом (Строгая фильтрация)
+@dp.message(Command("start"), F.chat.type == 'private', F.business_connection_id.not_)
 async def handle_start_private(message: types.Message):
     user_id = message.from_user.id
     if user_id in user_histories:
@@ -134,31 +125,22 @@ async def handle_text_to_text(message: types.Message):
 
     logger.info(f"Получено Business-сообщение от Chat ID: {message.chat.id}. Текст: {message.text[:30]}")
 
-    # --- ИЗОЛЯЦИЯ send_chat_action ДЛЯ ИЗБЕЖАНИЯ PEER_ID_INVALID ---
     try:
-        # Отправляем chat_action через business_connection_id
         await bot.send_chat_action(
             chat_id=message.chat.id, 
             action="typing",
             business_connection_id=business_id
         )
-        logger.info("Отправлено 'typing'...")
     except Exception as e:
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
-    # --- КОНЕЦ ИЗОЛЯЦИИ ---
 
     user_id = message.from_user.id
-    # Получаем имя собеседника. Если имени нет, используем "друг"
     first_name = message.from_user.first_name or "друг"
 
     try:
-        # 1. Записываем сообщение пользователя в историю
         update_history(user_id, "user", message.text)
-
-        # 2. Формируем финальный список сообщений с именем для OpenAI
         messages_for_openai = build_openai_messages(user_id, first_name)
 
-        # ОСНОВНАЯ ЛОГИКА (OpenAI)
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages_for_openai,
@@ -168,13 +150,10 @@ async def handle_text_to_text(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
 
-        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
         delay_s = random.randint(5, 20)
         logger.info(f"Задержка перед отправкой ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
-        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
 
-        # ОТПРАВКА ОТВЕТА
         await bot.send_message(
             business_connection_id=business_id,
             chat_id=message.chat.id,
@@ -184,7 +163,6 @@ async def handle_text_to_text(message: types.Message):
         logger.info(f"Текстовый ответ отправлен через Business ID: {business_id}")
 
     except Exception as e:
-        # Этот блок сработает, только если упадет OpenAI или send_message
         logger.error(f"Критическая ошибка при работе с OpenAI/отправке сообщения: {e}")
         await bot.send_message(
             business_connection_id=business_id,
@@ -202,26 +180,20 @@ async def handle_voice_to_voice(message: types.Message):
         logger.warning("Пропуск голосового сообщения: невалидные ID (вероятно, служебное).")
         return
 
-    # --- ИЗОЛЯЦИЯ send_chat_action ---
     try:
-        # Отправляем chat_action через business_connection_id
         await bot.send_chat_action(
             chat_id=message.chat.id, 
             action="record_voice",
             business_connection_id=business_id
         )
-        logger.info("Отправлено 'record_voice'...")
     except Exception as e:
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
-    # --- КОНЕЦ ИЗОЛЯЦИИ ---
 
     user_id = message.from_user.id
-    # Получаем имя собеседника. Если имени нет, используем "друг"
     first_name = message.from_user.first_name or "друг"
     audio_file_path = None
 
     try:
-        # 1. Распознавание речи (Whisper)
         voice_file_info = await bot.get_file(message.voice.file_id)
         voice_downloaded = io.BytesIO()
         await bot.download_file(voice_file_info.file_path, voice_downloaded)
@@ -234,11 +206,9 @@ async def handle_voice_to_voice(message: types.Message):
         user_text = transcript.text
         logger.info(f"Распознанный текст: {user_text}")
 
-        # 2. Генерация текстового ответа (ChatGPT)
         update_history(user_id, "user", user_text)
-
-        # Формируем финальный список сообщений с именем для OpenAI
         messages_for_openai = build_openai_messages(user_id, first_name)
+        
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages_for_openai,
@@ -247,7 +217,6 @@ async def handle_voice_to_voice(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
 
-        # 3. Синтез речи (ElevenLabs)
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
         headers = {
             "Accept": "audio/mpeg",
@@ -265,23 +234,17 @@ async def handle_voice_to_voice(message: types.Message):
                 if response.status != 200:
                     error_message = await response.text()
                     raise Exception(f"ElevenLabs API Error (Code {response.status}): {error_message}")
-
-                # 4. Получение аудио
                 audio_data_bytes = await response.read()
 
-        # Сохраняем аудиобайты во временный файл
         audio_file_path = f"response_{message.chat.id}_{message.message_id}.mp3"
         with open(audio_file_path, "wb") as f:
             f.write(audio_data_bytes)
 
-        # 4.2 Отправка голосового сообщения
         telegram_file = FSInputFile(audio_file_path)
 
-        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
         delay_s = random.randint(5, 20)
         logger.info(f"Задержка перед отправкой голосового ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
-        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
 
         await bot.send_voice(
             business_connection_id=business_id,
@@ -300,7 +263,6 @@ async def handle_voice_to_voice(message: types.Message):
         )
 
     finally:
-        # 5. Очистка
         if audio_file_path and os.path.exists(audio_file_path):
             asyncio.create_task(delete_temp_file(audio_file_path))
 
@@ -311,7 +273,6 @@ async def handle_unhandled_business_messages(message: types.Message):
     """Ответ на стикеры, фото и другие необработанные типы сообщений."""
     business_id = message.business_connection_id
 
-    # Этот обработчик должен срабатывать только для необработанных типов
     if message.content_type not in ['text', 'voice']:
         logger.info(f"Получено нераспознанное Business-сообщение (тип: {message.content_type}). Отправка нейтрального ответа.")
 
@@ -324,20 +285,17 @@ async def handle_unhandled_business_messages(message: types.Message):
         except Exception as e:
             logger.error(f"Ошибка при отправке нейтрального ответа в Business-чате: {e}")
 
-    # Если content_type = 'text' или 'voice', то сообщение уже обработано другими функциями (5.2 и 5.3)
     return
 
 
-# 5.5. ТЕКСТ В ПРЯМОМ ЛС С БОТОМ (Включен AI)
-@dp.message(F.text, F.chat.type == 'private')
+# 5.5. ТЕКСТ В ПРЯМОМ ЛС С БОТОМ (Включен AI, Строгая фильтрация)
+@dp.message(F.text, F.chat.type == 'private', F.business_connection_id.not_)
 async def handle_private_text_ai(message: types.Message):
 
     logger.info(f"Получено Private-сообщение от Chat ID: {message.chat.id}. Текст: {message.text[:30]}")
 
-    # Отправляем "typing"
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        logger.info("Отправлено 'typing'...")
     except Exception as e:
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
 
@@ -345,13 +303,9 @@ async def handle_private_text_ai(message: types.Message):
     first_name = message.from_user.first_name or "друг"
 
     try:
-        # 1. Записываем сообщение пользователя в историю
         update_history(user_id, "user", message.text)
-
-        # 2. Формируем финальный список сообщений
         messages_for_openai = build_openai_messages(user_id, first_name)
 
-        # ОСНОВНАЯ ЛОГИКА (OpenAI)
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages_for_openai,
@@ -361,13 +315,10 @@ async def handle_private_text_ai(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
 
-        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
         delay_s = random.randint(5, 20)
         logger.info(f"Задержка перед отправкой ответа в ЛС: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
-        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
 
-        # ОТПРАВКА ОТВЕТА
         await message.reply(reply_text)
 
         logger.info(f"Текстовый ответ отправлен в ЛС Chat ID: {message.chat.id}")
@@ -377,16 +328,14 @@ async def handle_private_text_ai(message: types.Message):
         await message.reply("Извини, Дониёр сейчас занят и не смог ответить текстом в ЛС. 😥")
 
 
-# 5.6. ГОЛОС -> ГОЛОС (С памятью, Прямой ЛС)
-@dp.message(F.voice, F.chat.type == 'private')
+# 5.6. ГОЛОС -> ГОЛОС (С памятью, Прямой ЛС, Строгая фильтрация)
+@dp.message(F.voice, F.chat.type == 'private', F.business_connection_id.not_)
 async def handle_private_voice_to_voice(message: types.Message):
 
     logger.info(f"Получено Private-голосовое сообщение от Chat ID: {message.chat.id}")
 
-    # Отправляем 'record_voice'
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
-        logger.info("Отправлено 'record_voice'...")
     except Exception as e:
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
 
@@ -395,7 +344,6 @@ async def handle_private_voice_to_voice(message: types.Message):
     audio_file_path = None
 
     try:
-        # 1. Распознавание речи (Whisper)
         voice_file_info = await bot.get_file(message.voice.file_id)
         voice_downloaded = io.BytesIO()
         await bot.download_file(voice_file_info.file_path, voice_downloaded)
@@ -408,7 +356,6 @@ async def handle_private_voice_to_voice(message: types.Message):
         user_text = transcript.text
         logger.info(f"Распознанный текст: {user_text}")
 
-        # 2. Генерация текстового ответа (ChatGPT)
         update_history(user_id, "user", user_text)
         messages_for_openai = build_openai_messages(user_id, first_name)
 
@@ -420,7 +367,6 @@ async def handle_private_voice_to_voice(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
 
-        # 3. Синтез речи (ElevenLabs)
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
         headers = {
             "Accept": "audio/mpeg",
@@ -441,19 +387,15 @@ async def handle_private_voice_to_voice(message: types.Message):
 
                 audio_data_bytes = await response.read()
 
-        # Сохраняем аудиобайты во временный файл
         audio_file_path = f"response_{message.chat.id}_{message.message_id}.mp3"
         with open(audio_file_path, "wb") as f:
             f.write(audio_data_bytes)
 
-        # 4. Отправка голосового сообщения
         telegram_file = FSInputFile(audio_file_path)
 
-        # --- ЛОГИКА СЛУЧАЙНОЙ ЗАДЕРЖКИ (5-20 секунд) ---
         delay_s = random.randint(5, 20)
         logger.info(f"Задержка перед отправкой голосового ответа в ЛС: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
-        # --- КОНЕЦ ЛОГИКИ ЗАДЕРЖКИ ---
 
         await message.reply_voice(voice=telegram_file)
 
@@ -464,13 +406,12 @@ async def handle_private_voice_to_voice(message: types.Message):
         await message.reply("Извини, я не смог обработать голосовое сообщение в ЛС. Кажется, Дониёр отвлёкся. 😥")
 
     finally:
-        # 5. Очистка
         if audio_file_path and os.path.exists(audio_file_path):
             asyncio.create_task(delete_temp_file(audio_file_path))
 
 
-# 5.7. НЕОБРАБОТАННЫЕ СООБЩЕНИЯ В ПРИВАТНОМ ЧАТЕ
-@dp.message(F.chat.type == 'private')
+# 5.7. НЕОБРАБОТАННЫЕ СООБЩЕНИЯ В ПРИВАТНОМ ЧАТЕ (Строгая фильтрация)
+@dp.message(F.chat.type == 'private', F.business_connection_id.not_)
 async def handle_unhandled_private_messages(message: types.Message):
     """Ответ на стикеры, фото и другие необработанные типы сообщений в ЛС."""
     if message.content_type not in ['text', 'voice']:
@@ -488,9 +429,9 @@ if __name__ == '__main__':
     if not TELEGRAM_BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN не найден. Бот не запущен.")
     else:
-        # Упрощенная логика запуска, чтобы исключить SyntaxError
+        # Исправленный и упрощенный блок запуска
         logger.info("Запуск бота...")
         try:
             dp.run_polling(bot, skip_updates=True)
         except Exception as e:
-            logger.error(f"Ошибка при запуске Polling: {e}")
+            logger.error(f"Критическая ошибка при запуске Polling: {e}")
