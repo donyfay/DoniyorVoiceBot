@@ -10,7 +10,8 @@ import aiohttp
 # Aiogram v3 импорты
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage 
-from aiogram.types import FSInputFile, BusinessMessage, Message
+from aiogram.types import FSInputFile, Message 
+from aiogram.types.business_connection import BusinessMessage # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
 from aiogram.filters import Command 
 from aiogram.enums import ParseMode 
 from openai import AsyncOpenAI 
@@ -142,7 +143,7 @@ async def handle_text_to_text(message: BusinessMessage):
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
     # --- КОНЕЦ ИЗОЛЯЦИИ ---
     
-    user_id = message.from_user.id
+    user_id = message.from_user.id  
     # Получаем имя собеседника. Если имени нет, используем "друг"
     first_name = message.from_user.first_name or "друг"
     
@@ -329,7 +330,7 @@ async def handle_private_text_ai(message: types.Message):
     except Exception as e:
         logger.warning(f"Ошибка при отправке chat_action: {e}. Продолжаем выполнение.")
         
-    user_id = message.from_user.id
+    user_id = message.from_user.id  
     first_name = message.from_user.first_name or "друг"
     
     try:
@@ -365,7 +366,7 @@ async def handle_private_text_ai(message: types.Message):
         await message.reply("Извини, Дониёр сейчас занят и не смог ответить текстом в ЛС. 😥")
 
 
-# 5.6. НОВЫЙ: ГОЛОС -> ГОЛОС (С памятью, Прямой ЛС)
+# 5.6. ГОЛОС -> ГОЛОС (С памятью, Прямой ЛС)
 @dp.message(F.voice, F.chat.type == 'private')
 async def handle_private_voice_to_voice(message: types.Message):
     
