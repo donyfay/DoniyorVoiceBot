@@ -3,23 +3,19 @@ import logging
 import asyncio
 import io
 import random
-from dotenv import load_dotenv
-
-import aiohttp
 
 # Aiogram v3 импорты
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import FSInputFile, Message
-# from aiogram.types.business import BusinessMessage  # <-- УДАЛЕНО!
-
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
 
 from openai import AsyncOpenAI
+import aiohttp
 
 # --- 1. ЗАГРУЗКА КЛЮЧЕЙ И КОНФИГУРАЦИЯ ---
-load_dotenv()
+# !!! УДАЛЕН ВЫЗОВ load_dotenv() - Render использует os.getenv напрямую !!!
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -490,10 +486,11 @@ async def handle_unhandled_private_messages(message: types.Message):
 # --- 6. ЗАПУСК БОТА ---
 if __name__ == '__main__':
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN не найден. Проверьте файл .env.")
+        logger.error("TELEGRAM_BOT_TOKEN не найден. Бот не запущен.")
     else:
+        # Упрощенная логика запуска, чтобы исключить SyntaxError
         logger.info("Запуск бота...")
-        dp.run_polling(bot, skip_updates=True)
-    else:
-        logger.info("Запуск бота...")
-        dp.run_polling(bot, skip_updates=True)
+        try:
+            dp.run_polling(bot, skip_updates=True)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске Polling: {e}")
