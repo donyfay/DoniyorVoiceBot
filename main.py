@@ -137,7 +137,7 @@ async def handle_text_to_text(message: types.Message):
         reply_text = response.choices[0].message.content
         update_history(user_id, "assistant", reply_text)
         
-        # --- НОВАЯ ЛОГИКА ЗАДЕРЖКИ (5-60 секунд) ---
+        # --- НОВАЯ ЛОГИКА ЗАДЕРЖКИ (5-10 секунд) ---
         delay_s = random.randint(5, 60)
         logging.info(f"Задержка перед отправкой ответа: {delay_s} секунд.")
         await asyncio.sleep(delay_s)
