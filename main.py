@@ -53,7 +53,7 @@ GIRLFRIEND_SYSTEM_PROMPT = """
 
 # --- 3. ЛОГИКА ПАМЯТИ (ИСТОРИЯ ЧАТА) ---
 user_histories = {}
-MAX_CONTEXT_MESSAGES = 10 
+MAX_CONTEXT_MESSAGES = 30
 
 def get_history(user_id):
     """Возвращает историю диалога пользователя (без системного промпта)."""
